@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Campaign {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  subtitle    String?
+  location    String
+  category    String
+  notice      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  leads       Lead[]
+}
+
+model Lead {
+  id              String   @id
+  campaignId      String
+  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  name            String
+  category        String?
+  zone            String?
+  score           Int      @default(0)
+  scoreReason     String?
+  rating          Float?
+  reviews         Int      @default(0)
+  phone           String?
+  phoneE164       String?
+  address         String?
+  websiteStatus   String?
+  hasWebsite      Boolean  @default(false)
+  websiteUrl      String?
+  isChain         Boolean  @default(false)
+  isTopLead       Boolean  @default(false)
+  socialVerdict   String?
+  socialBadge     String?
+  socialNote      String?
+  description     String?
+  sentiment       String?
+  emailSubject    String?
+  emailBody       String?
+  emailWarning    String?
+  whatsappMsg     String?
+  mapsUrl         String?
+  instagramUrl    String?
+  facebookUrl     String?
+
+  // CRM State (Persistencia por Lead)
+  called          Boolean  @default(false)
+  status          String   @default("pendiente") // pendiente, contactado, interesado, sin_respuesta, descartado, cerrado
+  notes           String   @default("")
+  lastContactedAt DateTime?
+  updatedAt       DateTime @updatedAt
+
+  @@index([campaignId])
+}

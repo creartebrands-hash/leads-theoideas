@@ -6,6 +6,7 @@ const prisma = new PrismaClient()
 
 interface RawLead {
   id: string
+  // Common English keys
   nombre?: string
   name?: string
   categoria?: string
@@ -46,11 +47,51 @@ interface RawLead {
   instagram?: string
   instagram_url?: string
   facebook_url?: string
+  // Boutique HTML specific keys
+  nombre_negocio?: string
+  tipo_negocio?: string
+  nicho?: string
+  ciudad?: string
+  dir?: string
+  tel?: string
+  wa?: string
+  wstat?: string      // 'si' | 'no' | 'basica' | 'nc'
+  ig?: string
+  fb?: string
+  rc?: number
+  maps?: string
+  desc?: string
+  clientes?: string
+  queja?: string
+  fallas?: string[]
+  sols?: string[]
+  invest?: string[]
+  pri?: string        // 'A+' | 'A' | 'B' | 'C' | 'D'
+  wa_msg?: string
+  subj?: string
+  email?: string
+  tipo?: string       // 'indep' | 'grupo'
+  es?: string
+  es_txt?: string
+  pais?: string
 }
 
 function extractLeadsFromHtml(filePath: string): RawLead[] {
   const content = fs.readFileSync(filePath, 'utf-8')
-  
+
+  // Boutique format: <script id="data" type="application/json">{"leads":[...]}
+  const dataMatch = content.match(/<script\s+id="data"\s+type="application\/json">([\s\S]*?)<\/script>/)
+  if (dataMatch) {
+    try {
+      const parsed = JSON.parse(dataMatch[1])
+      if (parsed.leads && Array.isArray(parsed.leads)) {
+        return parsed.leads
+      }
+    } catch (e) {
+      console.error(`Error parsing <script id="data"> in ${filePath}:`, e)
+    }
+  }
+
   // Try <script id="payload" type="application/json">
   const payloadMatch = content.match(/<script\s+id="payload"\s+type="application\/json">\s*(\{[\s\S]*?\})\s*<\/script>/)
   if (payloadMatch) {
@@ -126,6 +167,15 @@ async function main() {
       category: 'Salud',
       notice: 'Base de datos de clínicas y consultorios independientes de salud en Los Ángeles.',
       file: 'LA_Leads_Salud_Hispanohablantes.html'
+    },
+    {
+      slug: 'boutique-puerto-rico',
+      title: 'Boutique Puerto Rico',
+      subtitle: 'Joyerías, boutiques, salones, centros de estética, reposterías y tiendas de artesanía de Puerto Rico y las ciudades más hispanas de EE. UU. 600 leads seleccionados de 811 fichas revisadas, con análisis de presencia digital, resumen de reseñas y mensajes de prospección listos para enviar.',
+      location: 'Puerto Rico & EE. UU.',
+      category: 'Boutique',
+      notice: 'Emprendedoras y pequeños negocios hispanos — joyerías, boutiques, salones y estética, reposterías y artesanía. Datos públicos de Google Maps. Comprobado el 1 de octubre de 2026.',
+      file: 'PR_Leads_Boutique.html'
     }
   ]
 
@@ -164,69 +214,74 @@ async function main() {
       const name = raw.nombre || raw.name || 'Sin Nombre'
       const leadId = raw.id ? `${cData.slug}-${raw.id}` : `${cData.slug}-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
 
-      const hasWeb = raw.tiene_web !== undefined ? raw.tiene_web : (raw.website_status !== 'none' && raw.website_status !== null)
+      // hasWebsite: check tiene_web, website_status (old formats) or wstat (Boutique format)
+      const hasWeb = raw.tiene_web !== undefined
+        ? raw.tiene_web
+        : raw.wstat !== undefined
+          ? (raw.wstat === 'si' || raw.wstat === 'basica')
+          : (raw.website_status !== 'none' && raw.website_status !== null)
 
       await prisma.lead.upsert({
         where: { id: leadId },
         update: {
           name,
-          category: raw.categoria || raw.category || cData.category,
-          zone: raw.zona || raw.zone || cData.location,
+          category: raw.nicho || raw.categoria || raw.category || cData.category,
+          zone: raw.zona || raw.zone || raw.ciudad || cData.location,
           score: raw.score || 0,
-          scoreReason: raw.score_motivo || null,
+          scoreReason: raw.score_motivo || raw.pri || null,
           rating: raw.valoracion ?? raw.rating ?? null,
-          reviews: raw.num_resenas ?? raw.reviews ?? 0,
-          phone: raw.telefono || raw.phone || null,
+          reviews: raw.num_resenas ?? raw.rc ?? raw.reviews ?? 0,
+          phone: raw.telefono || raw.tel || raw.phone || null,
           phoneE164: raw.phone_e164 || null,
-          address: raw.direccion || raw.address || null,
-          websiteStatus: raw.website_status || (hasWeb ? 'real' : 'none'),
+          address: raw.direccion || raw.dir || raw.address || null,
+          websiteStatus: raw.wstat || raw.website_status || (hasWeb ? 'real' : 'none'),
           hasWebsite: Boolean(hasWeb),
           websiteUrl: raw.web || null,
-          isChain: Boolean(raw.chain ?? raw.is_chain ?? false),
-          isTopLead: Boolean(raw.is_top_lead ?? false),
-          socialVerdict: raw.social_verdict || null,
-          socialBadge: raw.social_badge || null,
-          socialNote: raw.social_note || null,
-          description: raw.descripcion || raw.description || null,
-          sentiment: raw.resumen_resenas || raw.sentiment || null,
-          emailSubject: raw.email_asunto || raw.email_subject || null,
-          emailBody: raw.email_cuerpo || raw.email_body || null,
+          isChain: Boolean(raw.chain ?? raw.is_chain ?? (raw.tipo === 'grupo') ?? false),
+          isTopLead: Boolean(raw.is_top_lead ?? (raw.pri === 'A+') ?? false),
+          socialVerdict: raw.social_verdict || raw.es || null,
+          socialBadge: raw.social_badge || raw.pri || null,
+          socialNote: raw.social_note || raw.es_txt || null,
+          description: raw.descripcion || raw.desc || raw.description || null,
+          sentiment: raw.resumen_resenas || raw.clientes || raw.sentiment || null,
+          emailSubject: raw.email_asunto || raw.subj || raw.email_subject || null,
+          emailBody: raw.email_cuerpo || raw.email || raw.email_body || null,
           emailWarning: raw.email_advertencia || null,
-          whatsappMsg: raw.whatsapp_msg || null,
-          mapsUrl: raw.maps_url || null,
-          instagramUrl: raw.instagram || raw.instagram_url || null,
-          facebookUrl: raw.facebook_url || null,
+          whatsappMsg: raw.whatsapp_msg || raw.wa_msg || null,
+          mapsUrl: raw.maps_url || raw.maps || null,
+          instagramUrl: raw.ig || raw.instagram || raw.instagram_url || null,
+          facebookUrl: raw.fb || raw.facebook_url || null,
         },
         create: {
           id: leadId,
           campaignId: campaign.id,
           name,
-          category: raw.categoria || raw.category || cData.category,
-          zone: raw.zona || raw.zone || cData.location,
+          category: raw.nicho || raw.categoria || raw.category || cData.category,
+          zone: raw.zona || raw.zone || raw.ciudad || cData.location,
           score: raw.score || 0,
-          scoreReason: raw.score_motivo || null,
+          scoreReason: raw.score_motivo || raw.pri || null,
           rating: raw.valoracion ?? raw.rating ?? null,
-          reviews: raw.num_resenas ?? raw.reviews ?? 0,
-          phone: raw.telefono || raw.phone || null,
+          reviews: raw.num_resenas ?? raw.rc ?? raw.reviews ?? 0,
+          phone: raw.telefono || raw.tel || raw.phone || null,
           phoneE164: raw.phone_e164 || null,
-          address: raw.direccion || raw.address || null,
-          websiteStatus: raw.website_status || (hasWeb ? 'real' : 'none'),
+          address: raw.direccion || raw.dir || raw.address || null,
+          websiteStatus: raw.wstat || raw.website_status || (hasWeb ? 'real' : 'none'),
           hasWebsite: Boolean(hasWeb),
           websiteUrl: raw.web || null,
-          isChain: Boolean(raw.chain ?? raw.is_chain ?? false),
-          isTopLead: Boolean(raw.is_top_lead ?? false),
-          socialVerdict: raw.social_verdict || null,
-          socialBadge: raw.social_badge || null,
-          socialNote: raw.social_note || null,
-          description: raw.descripcion || raw.description || null,
-          sentiment: raw.resumen_resenas || raw.sentiment || null,
-          emailSubject: raw.email_asunto || raw.email_subject || null,
-          emailBody: raw.email_cuerpo || raw.email_body || null,
+          isChain: Boolean(raw.chain ?? raw.is_chain ?? (raw.tipo === 'grupo') ?? false),
+          isTopLead: Boolean(raw.is_top_lead ?? (raw.pri === 'A+') ?? false),
+          socialVerdict: raw.social_verdict || raw.es || null,
+          socialBadge: raw.social_badge || raw.pri || null,
+          socialNote: raw.social_note || raw.es_txt || null,
+          description: raw.descripcion || raw.desc || raw.description || null,
+          sentiment: raw.resumen_resenas || raw.clientes || raw.sentiment || null,
+          emailSubject: raw.email_asunto || raw.subj || raw.email_subject || null,
+          emailBody: raw.email_cuerpo || raw.email || raw.email_body || null,
           emailWarning: raw.email_advertencia || null,
-          whatsappMsg: raw.whatsapp_msg || null,
-          mapsUrl: raw.maps_url || null,
-          instagramUrl: raw.instagram || raw.instagram_url || null,
-          facebookUrl: raw.facebook_url || null,
+          whatsappMsg: raw.whatsapp_msg || raw.wa_msg || null,
+          mapsUrl: raw.maps_url || raw.maps || null,
+          instagramUrl: raw.ig || raw.instagram || raw.instagram_url || null,
+          facebookUrl: raw.fb || raw.facebook_url || null,
           called: false,
           status: 'pendiente',
           notes: '',
